@@ -1,0 +1,24 @@
+┌─────────────────────────────────────────────────────┐
+│                    FEDORA (HOST)                     │
+│                                                      │
+│  krfb-virtualmonitor                                 │
+│  → creates "TabletDisplay" in KDE Display Settings   │
+│  → drag windows onto it like a real monitor          │
+│         ↓                                            │
+│  wf-recorder                                         │
+│  → reads frames via pw_stream (native Wayland/60fps) │
+│  → outputs raw YUV420 bytes to stdout pipe           │
+│         ↓                                            │
+│  GStreamer                                           │
+│  fdsrc → rawvideoparse → x264enc → h264parse         │
+│  → tcpclientsink → 127.0.0.1:7110                    │
+│         ↓                                            │
+│  ADB forward tcp:7110 tcp:7110                       │
+└─────────────────────────────────────────────────────┘
+                        ↓ USB
+┌─────────────────────────────────────────────────────┐
+│                 ANDROID TABLET                       │
+│  ServerSocket on port 7110                           │
+│  → receives H264 stream                              │
+│  → MediaCodec decode → SurfaceView display           │
+└─────────────────────────────────────────────────────┘

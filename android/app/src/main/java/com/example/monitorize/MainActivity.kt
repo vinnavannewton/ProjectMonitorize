@@ -26,8 +26,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Force the window to be black
-        window.setBackgroundDrawableResource(android.R.color.black)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         setContent {
@@ -35,27 +33,21 @@ class MainActivity : ComponentActivity() {
                 StreamSurface(
                     modifier = Modifier.fillMaxSize(),
                     onSurfaceReady = { sv ->
-                        // REQUIRED: Pierce through all UI layers
-                        sv.setZOrderOnTop(true) 
+                        // MediaOverlay keeps UI (Text) visible on top of video
+                        sv.setZOrderMediaOverlay(true) 
                         sv.holder.addCallback(object : SurfaceHolder.Callback {
                             override fun surfaceCreated(holder: SurfaceHolder) {
                                 startStream(holder.surface)
                             }
                             override fun surfaceChanged(h: SurfaceHolder, f: Int, w: Int, ht: Int) {}
-                            override fun surfaceDestroyed(h: SurfaceHolder) {
-                                stopStream()
-                            }
+                            override fun surfaceDestroyed(h: SurfaceHolder) { stopStream() }
                         })
                     }
                 )
-                
-                // Status Overlay
                 Text(
                     text = status.value,
                     color = Color.Green,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(32.dp)
+                    modifier = Modifier.align(Alignment.TopStart).padding(32.dp)
                 )
             }
         }
