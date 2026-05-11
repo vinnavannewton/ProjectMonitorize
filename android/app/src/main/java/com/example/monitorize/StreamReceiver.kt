@@ -1,23 +1,31 @@
 package com.example.monitorize
 
 import android.util.Log
-import java.io.IOException
 import java.net.ServerSocket
-import java.net.Socket
-import java.net.InetSocketAddress
 
+/**
+ * Reads raw H.264 Annex B bytes from TCP and feeds them directly to the decoder.
+ * No NAL parsing — MediaCodec handles start-code detection internally.
+ *
+ * This raw-chunk approach produces the best results on Samsung Tab S7 FE
+ * (Qualcomm Snapdragon 750G). NAL-aligned and CODEC_CONFIG approaches
+ * caused full-frame chroma corruption on this device.
+ */
 class StreamReceiver(private val decoder: H264Decoder) {
-
-    var onStatusChange: ((String) -> Unit)? = null
 
     private var running = false
     private var serverSocket: ServerSocket? = null
 
+    var onStatusChange: ((String) -> Unit)? = null
+
     companion object {
         private const val TAG = "StreamReceiver"
-        const val PORT = 7110
-        private const val DEFAULT_WIDTH  = 1280
-        private const val DEFAULT_HEIGHT = 800
+        private const val PORT = 7110
+
+        // Must match linux/monitorize_fallback.py
+        private const val STREAM_WIDTH  = 1280
+        private const val STREAM_HEIGHT = 800
+        private const val STREAM_FPS    = 60
     }
 
     fun start() {
@@ -25,135 +33,40 @@ class StreamReceiver(private val decoder: H264Decoder) {
         Thread(::receiveLoop, "MonitorizeReceiver").start()
     }
 
+    private fun receiveLoop() {
+        try {
+            serverSocket = ServerSocket(PORT)
+            onStatusChange?.invoke("Waiting for connection…")
+
+            val socket = serverSocket!!.accept()
+            socket.tcpNoDelay = true
+            socket.receiveBufferSize = 512 * 1024
+            onStatusChange?.invoke("Connected")
+
+            decoder.init(STREAM_WIDTH, STREAM_HEIGHT, STREAM_FPS)
+            onStatusChange?.invoke("Stream: ${STREAM_WIDTH}×${STREAM_HEIGHT} @ ${STREAM_FPS}fps")
+
+            // Read raw TCP bytes and feed directly to MediaCodec.
+            // The codec handles Annex B start-code detection internally.
+            val buf = ByteArray(256 * 1024)
+            val input = socket.getInputStream()
+
+            while (running) {
+                val n = input.read(buf)
+                if (n <= 0) break
+                decoder.feedChunk(buf, 0, n)
+            }
+
+        } catch (e: Exception) {
+            if (running) {
+                Log.e(TAG, "Stream error", e)
+                onStatusChange?.invoke("Error: ${e.message}")
+            }
+        }
+    }
+
     fun stop() {
         running = false
-        try { serverSocket?.close() } catch (_: IOException) {}
-        serverSocket = null
+        try { serverSocket?.close() } catch (_: Exception) {}
     }
-
-    private fun receiveLoop() {
-        var bound = false
-        while (running && !bound) {
-            try {
-                serverSocket = ServerSocket().apply {
-                    reuseAddress = true
-                    bind(InetSocketAddress(PORT))
-                }
-                bound = true
-            } catch (e: IOException) {
-                Log.w(TAG, "Bind failed (${e.message}) — retrying in 2s")
-                status("Binding port $PORT… retrying")
-                Thread.sleep(2000)
-            }
-        }
-        if (!bound) return
-
-        Log.i(TAG, "Listening on port $PORT")
-        status("Waiting for stream…")
-
-        while (running) {
-            val socket: Socket = try {
-                serverSocket?.accept() ?: break
-            } catch (e: IOException) {
-                if (running) Log.w(TAG, "Accept error: ${e.message}")
-                break
-            }
-            Log.i(TAG, "Connection from ${socket.inetAddress}")
-            status("Connected — buffering…")
-            handleConnection(socket)
-            if (running) status("Disconnected — waiting…")
-        }
-    }
-
-    private fun handleConnection(socket: Socket) {
-        var decoderReady = false
-        var totalNals = 0L
-        
-        // FIX: Increased buffer to 2MB to handle bursts at 6000kbps
-        val buffer = ByteArray(2 * 1024 * 1024)
-        var bufferOffset = 0
-        val readBuf = ByteArray(65_536)
-
-        try {
-            socket.use { s ->
-                s.receiveBufferSize = 1024 * 1024  // 1MB socket buffer
-                s.tcpNoDelay = true                 // disable Nagle algorithm
-                val input = s.getInputStream()
-                while (running) {
-                    val n = input.read(readBuf)
-                    if (n <= 0) break
-
-                    if (bufferOffset + n > buffer.size) {
-                        Log.e(TAG, "Buffer overflow! Corrupt stream? Resetting.")
-                        bufferOffset = 0
-                    }
-
-                    System.arraycopy(readBuf, 0, buffer, bufferOffset, n)
-                    bufferOffset += n
-
-                    var searchFrom = 0
-                    while (true) {
-                        val nalStart = findStartCode(buffer, searchFrom, bufferOffset)
-                        if (nalStart == -1) break
-
-                        val scLen = startCodeLen(buffer, nalStart, bufferOffset)
-                        val nalBegin = nalStart + scLen
-                        val next = findStartCode(buffer, nalBegin, bufferOffset)
-
-                        if (next == -1) {
-                            searchFrom = nalStart
-                            break
-                        }
-
-                        val nalLen = next - nalBegin
-                        if (nalLen > 0) {
-                            val nalType = buffer[nalBegin].toInt() and 0x1F
-                            if (!decoderReady && nalType == 7) {
-                                decoder.init(DEFAULT_WIDTH, DEFAULT_HEIGHT)
-                                decoderReady = true
-                                status("Streaming Active")
-                            }
-                            if (decoderReady) {
-                                // FIX: Use non-blocking enqueue instead of blocking decode
-                                decoder.enqueue(buffer, nalStart, next - nalStart)
-                                totalNals++
-                            }
-                        }
-                        searchFrom = next
-                    }
-
-                    if (searchFrom > 0) {
-                        val remaining = bufferOffset - searchFrom
-                        if (remaining > 0) {
-                            System.arraycopy(buffer, searchFrom, buffer, 0, remaining)
-                        }
-                        bufferOffset = remaining
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Connection error", e)
-        } finally {
-            Log.i(TAG, "Session ended. NALs: $totalNals")
-        }
-    }
-
-    private fun findStartCode(buf: ByteArray, from: Int, limit: Int): Int {
-        val end = limit - 3
-        var i = from
-        while (i <= end) {
-            if (buf[i] == 0.toByte() && buf[i + 1] == 0.toByte()) {
-                if (buf[i + 2] == 1.toByte()) return i
-                if (i + 3 < limit &&
-                    buf[i + 2] == 0.toByte() && buf[i + 3] == 1.toByte()) return i
-            }
-            i++
-        }
-        return -1
-    }
-
-    private fun startCodeLen(buf: ByteArray, pos: Int, limit: Int): Int =
-        if (pos + 3 < limit && buf[pos + 2] == 0.toByte()) 4 else 3
-
-    private fun status(msg: String) { onStatusChange?.invoke(msg) }
 }

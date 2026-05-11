@@ -15,7 +15,7 @@ PORT=7110
 WIDTH=1280
 HEIGHT=800
 FPS=60
-BITRATE=6000        # kbps — raise to 10000 if USB quality allows
+BITRATE=15000       # kbps — 15 Mbps for 1280x800@60fps over USB
 DISPLAY_NAME="TabletDisplay"
 VIRTUAL_OUTPUT_NAME=""   # filled in at runtime after krfb creates the display
 
@@ -160,10 +160,10 @@ GST_PIPELINE="gst-launch-1.0 \
         tune=zerolatency \
         speed-preset=ultrafast \
         bitrate=${BITRATE} \
-        key-int-max=30 \
+        key-int-max=15 \
         byte-stream=true \
-        option-string=\"repeat-headers=1\" ! \
-    h264parse config-interval=1 ! \
+        option-string=\"repeat-headers=1:bframes=0:ref=1:sliced-threads=0\" ! \
+    h264parse config-interval=-1 ! \
     tcpclientsink host=127.0.0.1 port=${PORT}"
 
 log "Starting GStreamer encoder → ADB tunnel..."

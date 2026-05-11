@@ -5,9 +5,9 @@ from gi.repository import GLib
 
 PORT    = 7110
 WIDTH   = 1280
-HEIGHT  = 720
-FPS     = 24
-BITRATE = 20000
+HEIGHT  = 800
+FPS     = 60
+BITRATE = 15000
 
 DBusGMainLoop(set_as_default=True)
 loop    = GLib.MainLoop()
@@ -34,22 +34,24 @@ signal.signal(signal.SIGTERM, cleanup)
 def launch_streaming(fd, node_id):
     global gst_proc
 
-    # change this line to switch between file test and live stream
-    #sink = "matroskamux ! filesink location=/tmp/capture_test.mkv"
-    sink = f"tcpclientsink host=10.190.255.232 port={PORT} sync=false"
-    # sink = f"tcpclientsink host=127.0.0.1 port={PORT} sync=false"
+    # ADB forward: data goes over USB, not WiFi
+    # Run: adb forward tcp:7110 tcp:7110
+    sink = f"tcpclientsink host=127.0.0.1 port={PORT} sync=false"
 
     pipeline = (
     f"gst-launch-1.0 -e -v "
     f"pipewiresrc fd={fd} path={node_id} do-timestamp=true always-copy=true ! "
-    f"videorate ! video/x-raw,framerate={FPS}/1 ! "
-    f"queue max-size-buffers=4 leaky=downstream ! "
+    f"video/x-raw,framerate={FPS}/1 ! "
+    f"queue max-size-buffers=1 leaky=downstream ! "
     f"videoconvert n-threads=4 ! videoscale ! "
     f"video/x-raw,format=I420,width={WIDTH},height={HEIGHT} ! "
     f"x264enc tune=zerolatency speed-preset=ultrafast bitrate={BITRATE} "
-    f"key-int-max=15 byte-stream=true option-string=\"bframes=0:ref=1\" ! "
+    f"key-int-max=30 byte-stream=true "
+    f"option-string=\"bframes=0:ref=1:sliced-threads=0:"
+    f"rc-lookahead=0:sync-lookahead=0:threads=4:"
+    f"vbv-bufsize=1000:vbv-maxrate={BITRATE}\" ! "
     f"h264parse config-interval=-1 ! "
-    f"video/x-h264,stream-format=byte-stream,alignment=nal ! "
+    f"video/x-h264,stream-format=byte-stream,alignment=au ! "
     f"{sink}"
 )
 
