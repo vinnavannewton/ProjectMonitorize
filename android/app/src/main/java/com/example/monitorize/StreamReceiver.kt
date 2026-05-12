@@ -20,8 +20,8 @@ class StreamReceiver(private val decoder: H264Decoder) {
         private const val PORT = 7110
 
         // Must match linux/monitorize_fallback.py
-        private const val STREAM_WIDTH  = 1280
-        private const val STREAM_HEIGHT = 800
+        private const val STREAM_WIDTH  = 2560
+        private const val STREAM_HEIGHT = 1600
         private const val STREAM_FPS    = 60
     }
 

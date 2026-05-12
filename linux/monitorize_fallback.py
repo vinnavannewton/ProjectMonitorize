@@ -4,10 +4,10 @@ from dbus.mainloop.glib import DBusGMainLoop
 from gi.repository import GLib
 
 PORT    = 7110
-WIDTH   = 1280
-HEIGHT  = 800
+WIDTH   = 2560
+HEIGHT  = 1600
 FPS     = 60
-BITRATE = 15000
+BITRATE = 25000
 
 DBusGMainLoop(set_as_default=True)
 loop    = GLib.MainLoop()
